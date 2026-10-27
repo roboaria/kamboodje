@@ -7,25 +7,59 @@ on:
 
 jobs:
   build-flutter-apk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
-      - uses: subosito/flutter-action@v2
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
           channel: 'stable'
-      - name: Create Flutter Platform Runners & Build Release APK
-        working-directory: ./flutter_android_app
+
+      - name: Locate App Folder, Generate Android Runner & Build APK
         run: |
-          flutter create --platforms=android .
+          # Automatically find where pubspec.yaml was uploaded
+          PUBSPEC_PATH=$(find . -name "pubspec.yaml" | head -n 1)
+          if [ -z "$PUBSPEC_PATH" ]; then
+            echo "ERROR: pubspec.yaml not found! Make sure you uploaded the flutter_android_app folder to GitHub."
+            exit 1
+          fi
+
+          APP_DIR=$(dirname "$PUBSPEC_PATH")
+          echo "Found Flutter project at: $APP_DIR"
+          cd "$APP_DIR"
+
+          # Back up our custom Taraz main.dart & pubspec.yaml before flutter create runs
+          cp lib/main.dart /tmp/main.dart.bak
+          cp pubspec.yaml /tmp/pubspec.yaml.bak
+
+          # Generate the native Android project files
+          flutter create --platforms=android --org com.taraz.app .
+
+          # Restore our custom Taraz main.dart & pubspec.yaml
+          cp /tmp/main.dart.bak lib/main.dart
+          cp /tmp/pubspec.yaml.bak pubspec.yaml
+
+          # Enable INTERNET permission for Localhost SQL sync in AndroidManifest.xml
+          sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/><application android:usesCleartextTraffic="true"/g' android/app/src/main/AndroidManifest.xml
+
+          # Fetch dependencies and compile the release APK
           flutter pub get
-          flutter build apk --release
-      - name: Upload APK
+          flutter build apk --release --no-tree-shake-icons
+
+          # Copy the finished APK to a clean output folder
+          mkdir -p "$GITHUB_WORKSPACE/output_apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "$GITHUB_WORKSPACE/output_apk/Taraz-Money-Manager.apk"
+
+      - name: Upload Compiled Android APK
         uses: actions/upload-artifact@v4
         with:
           name: Taraz-Flutter-Android-APK
-          path: flutter_android_app/build/app/outputs/flutter-apk/app-release.apk
+          path: output_apk/Taraz-Money-Manager.apk
