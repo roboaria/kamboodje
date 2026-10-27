@@ -10,51 +10,78 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Setup Java JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Flutter SDK
+      - name: Setup Flutter 3.24.5
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.24.5'
           channel: 'stable'
 
-      - name: Locate App Folder, Generate Android Runner & Build APK
+      - name: Build Standalone Android APK
         run: |
-          # Automatically find where pubspec.yaml was uploaded
-          PUBSPEC_PATH=$(find . -name "pubspec.yaml" | head -n 1)
-          if [ -z "$PUBSPEC_PATH" ]; then
-            echo "ERROR: pubspec.yaml not found! Make sure you uploaded the flutter_android_app folder to GitHub."
+          # 1. Find main.dart anywhere in your repository
+          MAIN_DART_PATH=$(find "$GITHUB_WORKSPACE" -name "main.dart" | head -n 1)
+          if [ -z "$MAIN_DART_PATH" ]; then
+            echo "ERROR: main.dart was not found in your GitHub repository!"
+            echo "Here are the files currently in your repository:"
+            find "$GITHUB_WORKSPACE" -maxdepth 3 -not -path '*/.*'
             exit 1
           fi
+          echo "Found main.dart at: $MAIN_DART_PATH"
 
-          APP_DIR=$(dirname "$PUBSPEC_PATH")
-          echo "Found Flutter project at: $APP_DIR"
-          cd "$APP_DIR"
+          # 2. Create a fresh, clean Flutter Android project in /tmp/taraz_build
+          flutter create --platforms=android --org com.taraz.app --project-name taraz_money_manager /tmp/taraz_build
+          cd /tmp/taraz_build
 
-          # Back up our custom Taraz main.dart & pubspec.yaml before flutter create runs
-          cp lib/main.dart /tmp/main.dart.bak
-          cp pubspec.yaml /tmp/pubspec.yaml.bak
+          # 3. Copy your Taraz main.dart into the clean project
+          cp "$MAIN_DART_PATH" lib/main.dart
 
-          # Generate the native Android project files
-          flutter create --platforms=android --org com.taraz.app .
+          # 4. Write a clean pubspec.yaml with all required dependencies
+          cat << 'EOF' > pubspec.yaml
+          name: taraz_money_manager
+          description: Taraz Money Manager
+          publish_to: 'none'
+          version: 4.0.0+4
 
-          # Restore our custom Taraz main.dart & pubspec.yaml
-          cp /tmp/main.dart.bak lib/main.dart
-          cp /tmp/pubspec.yaml.bak pubspec.yaml
+          environment:
+            sdk: '>=3.2.0 <4.0.0'
 
-          # Enable INTERNET permission for Localhost SQL sync in AndroidManifest.xml
-          sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/><application android:usesCleartextTraffic="true"/g' android/app/src/main/AndroidManifest.xml
+          dependencies:
+            flutter:
+              sdk: flutter
+            flutter_localizations:
+              sdk: flutter
+            http: ^1.2.1
+            sqflite: ^2.3.3
+            path: ^1.9.0
+            shared_preferences: ^2.2.3
 
-          # Fetch dependencies and compile the release APK
+          flutter:
+            uses-material-design: true
+          EOF
+
+          # 5. Safely add INTERNET permission and cleartext traffic to AndroidManifest.xml using Python
+          python3 -c '
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p).read()
+          if "android.permission.INTERNET" not in s:
+              s = s.replace("<manifest", "<manifest\n    ", 1)
+              s = s.replace("<application", "<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <application\n        android:usesCleartextTraffic=\"true\"", 1)
+          open(p, "w").write(s)
+          '
+
+          # 6. Fetch packages and compile the APK
           flutter pub get
           flutter build apk --release --no-tree-shake-icons
 
-          # Copy the finished APK to a clean output folder
+          # 7. Move APK to output folder
           mkdir -p "$GITHUB_WORKSPACE/output_apk"
           cp build/app/outputs/flutter-apk/app-release.apk "$GITHUB_WORKSPACE/output_apk/Taraz-Money-Manager.apk"
 
