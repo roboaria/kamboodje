@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Java JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -26,9 +26,29 @@ jobs:
 
       - name: Build Standalone APK from Flutter App Folder
         run: |
+          # Navigate into the flutter app folder
           cd flutter_app
+          
+          # 1. Create the missing Android build files
+          flutter create --platforms=android --org com.taraz.app .
+          
+          # 2. Add INTERNET permission to AndroidManifest.xml for the WebView
+          python3 -c '
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p).read()
+          if "android.permission.INTERNET" not in s:
+              s = s.replace("<manifest", "<manifest\n    ", 1)
+              s = s.replace("<application", "<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <application\n        android:usesCleartextTraffic=\"true\"", 1)
+          open(p, "w").write(s)
+          '
+          
+          # 3. Get dependencies
           flutter pub get
+          
+          # 4. Build release APK
           flutter build apk --release --no-tree-shake-icons
+
+          # 5. Copy APK to root output folder
           mkdir -p "$GITHUB_WORKSPACE/output_apk"
           cp build/app/outputs/flutter-apk/app-release.apk "$GITHUB_WORKSPACE/output_apk/Taraz-HTML-App.apk"
 
